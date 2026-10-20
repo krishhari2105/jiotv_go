@@ -888,6 +888,32 @@ func TestChannelsHandlerM3UDRM(t *testing.T) {
 	}
 }
 
+func TestSonyVizhaHDM3UUsesDRM(t *testing.T) {
+	originalEnableDRM := EnableDRM
+	defer func() {
+		EnableDRM = originalEnableDRM
+	}()
+	EnableDRM = true
+
+	playlist := GenerateM3UPlaylist([]television.Channel{{
+		ID:       "3622",
+		Name:     "Sony VIZHA HD",
+		LogoURL:  "sony_vizha_hd.png",
+		Category: 5,
+		Language: 6,
+	}}, "http://localhost:5001", "", "", "", "", "")
+
+	if !strings.Contains(playlist, "http://localhost:5001/live/mpd/3622") {
+		t.Errorf("Sony VIZHA HD playlist entry must use the DRM MPD route, got:\n%s", playlist)
+	}
+	if strings.Contains(playlist, "http://localhost:5001/live/3622.m3u8") {
+		t.Errorf("Sony VIZHA HD playlist entry must not use the HLS route, got:\n%s", playlist)
+	}
+	if !strings.Contains(playlist, "#KODIPROP:inputstream.adaptive.license_key=http://localhost:5001/live/key/3622") {
+		t.Errorf("Sony VIZHA HD playlist entry must include its Widevine license route, got:\n%s", playlist)
+	}
+}
+
 func TestGenerateM3UPlaylistSubscriptionFilter(t *testing.T) {
 	const (
 		freeChannelID = "100"
