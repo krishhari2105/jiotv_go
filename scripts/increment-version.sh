@@ -4,8 +4,13 @@
 tag=$(git describe --tags --match "v[0-9]*.[0-9]*.[0-9]*" --abbrev=0 || true)
 echo "Latest tag: $tag"
 if [[ -z "$tag" ]]; then
-    echo "No semver tag found, use 0.0.0"
-    tag="v0.0.0"
+    tag=$(tr -d '\r\n' < VERSION)
+    if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "No semver tag found, use VERSION $tag"
+    else
+        echo "No semver tag or valid VERSION found, use v0.0.0"
+        tag="v0.0.0"
+    fi
 fi
 
 # Get the major, minor and patch parts from the tag.
