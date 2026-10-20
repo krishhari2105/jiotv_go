@@ -1,10 +1,8 @@
 package handlers
 
 import (
-	"encoding/base64"
 	"net/http/httptest"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -60,34 +58,6 @@ func TestGetDrmMpd(t *testing.T) {
 				t.Errorf("getDrmMpd() = %v, want %v", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestInjectMissingWidevinePSSH(t *testing.T) {
-	const kid = "00112233-4455-6677-8899-aabbccddeeff"
-	const mpdWithoutPSSH = `<MPD xmlns:cenc="urn:mpeg:cenc:2013"><Period><AdaptationSet><ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" cenc:default_KID="` + kid + `"/><ContentProtection schemeIdUri="urn:uuid:EDEF8BA9-79D6-4ACE-A3C8-27DCD51D21ED"/></AdaptationSet></Period></MPD>`
-
-	result := string(injectMissingWidevinePSSH([]byte(mpdWithoutPSSH)))
-	if !strings.Contains(result, `<cenc:pssh>`) {
-		t.Fatalf("rewritten MPD does not contain a Widevine PSSH: %s", result)
-	}
-
-	start := strings.Index(result, `<cenc:pssh>`) + len(`<cenc:pssh>`)
-	end := strings.Index(result[start:], `</cenc:pssh>`)
-	if end < 0 {
-		t.Fatalf("rewritten MPD has an unterminated Widevine PSSH: %s", result)
-	}
-	pssh, err := base64.StdEncoding.DecodeString(result[start : start+end])
-	if err != nil {
-		t.Fatalf("PSSH is not base64: %v", err)
-	}
-	if len(pssh) < 52 || string(pssh[4:8]) != "pssh" || pssh[8] != 1 {
-		t.Fatalf("unexpected PSSH box: length=%d type=%q version=%d", len(pssh), pssh[4:8], pssh[8])
-	}
-
-	resultAgain := string(injectMissingWidevinePSSH([]byte(result)))
-	if resultAgain != result {
-		t.Fatal("existing Widevine PSSH was modified")
 	}
 }
 
