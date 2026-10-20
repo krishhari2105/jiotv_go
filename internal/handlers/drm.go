@@ -2,9 +2,6 @@ package handlers
 
 import (
 	"bytes"
-	"encoding/base64"
-	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 	"net/url"
 	"os"
@@ -86,85 +83,6 @@ var (
 
 // publishTimeRe extracts the publishTime attribute from live MPD bodies.
 var publishTimeRe = regexp.MustCompile(`publishTime="([^"]+)"`)
-
-var (
-	widevineSchemeURI            = "urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"
-	widevineSystemID, _          = hex.DecodeString("edef8ba979d64acea3c827dcd51d21ed")
-	defaultKIDRe                 = regexp.MustCompile(`(?i)cenc:default_KID\s*=\s*"([^"]+)"`)
-	contentProtectionSelfCloseRE = regexp.MustCompile(`(?is)<ContentProtection\b[^>]*/>`)
-)
-
-// buildWidevinePSSH builds a version-1 Common Encryption PSSH box containing
-// the key IDs advertised by the DASH manifest. Some Broadpeak MPDs identify
-// Widevine and include cenc:default_KID but omit cenc:pssh entirely. AVPlay's
-// EME path needs initialization data in the manifest before it can create a
-// DRM session, so it cannot defer this to the media initialization segment.
-func buildWidevinePSSH(mpd []byte) (string, bool) {
-	kidMatches := defaultKIDRe.FindAllSubmatch(mpd, -1)
-	kids := make([][]byte, 0, len(kidMatches))
-	seen := make(map[string]struct{}, len(kidMatches))
-	for _, match := range kidMatches {
-		kidString := strings.ReplaceAll(string(match[1]), "-", "")
-		kid, err := hex.DecodeString(kidString)
-		if err != nil || len(kid) != 16 {
-			continue
-		}
-		key := string(kid)
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		kids = append(kids, kid)
-	}
-	if len(kids) == 0 {
-		return "", false
-	}
-
-	// WidevinePsshData stores the KIDs in field 2 (key_id). Include this
-	// payload as well as the version-1 PSSH KID array: several CDMs accept the
-	// generic PSSH KID array, while others require Widevine's protobuf payload.
-	widevineData := make([]byte, 0, 18*len(kids))
-	for _, kid := range kids {
-		widevineData = append(widevineData, 0x12, 0x10)
-		widevineData = append(widevineData, kid...)
-	}
-
-	boxSize := 4 + 4 + 4 + len(widevineSystemID) + 4 + (16 * len(kids)) + 4 + len(widevineData)
-	box := make([]byte, boxSize)
-	binary.BigEndian.PutUint32(box[0:4], uint32(boxSize))
-	copy(box[4:8], "pssh")
-	box[8] = 1 // version 1 carries the KID array.
-	copy(box[12:28], widevineSystemID)
-	binary.BigEndian.PutUint32(box[28:32], uint32(len(kids)))
-	offset := 32
-	for _, kid := range kids {
-		copy(box[offset:offset+16], kid)
-		offset += 16
-	}
-	binary.BigEndian.PutUint32(box[offset:offset+4], uint32(len(widevineData)))
-	copy(box[offset+4:], widevineData)
-	return base64.StdEncoding.EncodeToString(box), true
-}
-
-// injectMissingWidevinePSSH adds init data only to Widevine ContentProtection
-// elements that have no child content. Existing provider PSSH is never altered.
-func injectMissingWidevinePSSH(mpd []byte) []byte {
-	if bytes.Contains(bytes.ToLower(mpd), []byte("<cenc:pssh")) {
-		return mpd
-	}
-	pssh, ok := buildWidevinePSSH(mpd)
-	if !ok {
-		return mpd
-	}
-
-	return contentProtectionSelfCloseRE.ReplaceAllFunc(mpd, func(match []byte) []byte {
-		if !bytes.Contains(bytes.ToLower(match), []byte(widevineSchemeURI)) {
-			return match
-		}
-		openTag := bytes.TrimSuffix(bytes.TrimSpace(match), []byte("/>"))
-		return []byte(fmt.Sprintf("%s><cenc:pssh>%s</cenc:pssh></ContentProtection>", openTag, pssh))
-	})
-}
 
 // recordCdnPublishTime caches the upstream CDN clock observed from an MPD fetch.
 func recordCdnPublishTime(publishTime time.Time) {
@@ -864,7 +782,6 @@ func MpdHandler(c *fiber.Ctx) error {
 		}
 	}
 	resBody := c.Response().Body()
-	resBody = injectMissingWidevinePSSH(resBody)
 
 	// Record the upstream CDN clock so /dashtime can report it: the segment
 	// timeline in this MPD is stamped in CDN time, and players must sync to
